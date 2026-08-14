@@ -1,0 +1,4 @@
+# Keep the controlled provider's requests deterministic: session titles use the
+# ordinary fallback while the conversation model drives only Thinking tools.
+- id: session-title-llm
+  disabled: true

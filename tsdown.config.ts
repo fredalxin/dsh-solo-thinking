@@ -1,0 +1,53 @@
+import { defineConfig } from 'tsdown'
+
+const external = [
+  '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-agent',
+  '@deepseek-ai/dsh-commands',
+  '@deepseek-ai/dsh-llm',
+  '@deepseek-ai/dsh-client-runtime/client',
+  '@deepseek-ai/dsh-client-ui-conversation/client',
+  '@deepseek-ai/dsh-client-ui-slots',
+  '@deepseek-ai/dsh-session',
+  '@deepseek-ai/dsh-session-projection',
+  '@deepseek-ai/dsh-system-prompt',
+  '@deepseek-ai/dsh-tools',
+  '@deepseek-ai/schemastery',
+  'react',
+  'react/jsx-runtime',
+  'react-dom',
+  'zod',
+]
+
+export default defineConfig([
+  {
+    name: 'host',
+    entry: { index: 'src/index.ts' },
+    outDir: 'lib',
+    format: 'esm',
+    platform: 'node',
+    target: 'node22',
+    dts: true,
+    clean: true,
+    fixedExtension: false,
+    outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
+    sourcemap: true,
+    deps: { neverBundle: external },
+  },
+  {
+    name: 'client',
+    entry: { client: 'src/client/index.tsx' },
+    outDir: 'lib',
+    format: 'cjs',
+    platform: 'browser',
+    target: 'es2022',
+    dts: true,
+    clean: false,
+    fixedExtension: false,
+    outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
+    sourcemap: true,
+    deps: { neverBundle: external },
+    banner: 'window.__ModuleLoader__.load({ id: "dsh-plugin-solo-thinking", factory: (require) => { var module = { exports: {} }; var exports = module.exports;',
+    footer: 'return module.exports; } });',
+  },
+])

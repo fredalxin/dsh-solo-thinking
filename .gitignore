@@ -1,0 +1,5 @@
+node_modules/
+*.tgz
+.npm-cache/
+.DS_Store
+artifacts/
