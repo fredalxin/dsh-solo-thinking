@@ -4,7 +4,7 @@
 
 > Solo-style isolated brainstorm branches, automatic Handoffs, and a visual thinking tree for DeepSeek Harness.
 
-![DSH Solo Thinking 右栏](docs/assets/solo-thinking-right-rail.png)
+![DSH Solo Thinking 完整头脑风暴 Tab](docs/assets/solo-thinking-right-rail.png)
 
 ## 核心能力
 
