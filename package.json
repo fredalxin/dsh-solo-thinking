@@ -125,6 +125,7 @@
     "@deepseek-ai/schemastery": "^3.18.1",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",
+    "dsh-better-sidebar": "^0.12.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "tsdown": "^0.22.14",
