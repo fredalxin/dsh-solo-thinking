@@ -27,7 +27,7 @@ pnpm run typecheck:contracts-ready
 Then install this plugin into the source checkout's Web profile and boot it:
 
 ```bash
-pnpm dsh plugin --profile web add github:fredalxin/dsh-plugin-solo-thinking#v0.1.17
+pnpm dsh plugin --profile web add github:fredalxin/dsh-solo-thinking#v0.1.18
 pnpm dsh --profile web
 ```
 

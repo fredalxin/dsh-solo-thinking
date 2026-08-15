@@ -19,6 +19,7 @@ if (registration?.id !== 'dsh-plugin-solo-thinking' || typeof registration.facto
 const runtime = registration.factory((id) => {
   if (id === 'react') return { useMemo: (factory) => factory() }
   if (id === 'react/jsx-runtime') return { jsx: () => null, jsxs: () => null }
+  if (id === '@deepseek-ai/dsh-client-ui-primitives') return { MarkdownText: () => null }
   throw new Error(`unexpected client runtime dependency: ${id}`)
 })
 

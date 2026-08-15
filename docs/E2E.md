@@ -8,7 +8,7 @@
 npm install
 npm run verify
 npm pack
-dsh plugin --profile web add ./dsh-plugin-solo-thinking-0.1.17.tgz
+dsh plugin --profile web add ./dsh-plugin-solo-thinking-0.1.18.tgz
 ```
 
 终端 A 启动受控 Provider：

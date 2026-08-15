@@ -1,16 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import type { CSSProperties, FormEvent, ReactNode } from 'react'
 import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { BetterSidebarService, TabComponentProps as BetterSidebarTabProps } from 'dsh-better-sidebar'
 import type { ThinkingNode, ThinkingSpace } from '../domain.js'
 import { computeOrbitLayout } from './layout.js'
 
 export const inject = ['slots', 'sessions', 'layout']
 
 const autoOpenedSessions = new Set<string>()
+export const BETTER_SIDEBAR_TAB_ID = 'dsh-plugin-solo-thinking:tree'
+
+interface ObservableSnapshot<T> {
+  getSnapshot(): T
+  subscribe(listener: () => void): () => void
+}
+
+const absentProjection: ObservableSnapshot<unknown> = {
+  getSnapshot: () => undefined,
+  subscribe: () => () => undefined,
+}
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
@@ -28,6 +41,7 @@ interface ThinkingViewProps extends ConvViewProps, BranchActions {}
 
 interface ThinkingRailProps extends PropsRuntime<'conversation.details.aux'>, BranchActions {
   openDetails: () => void
+  autoOpen?: boolean
 }
 
 interface ThinkingRailToggleProps extends PropsRuntime<'conversation.session.header.actions'> {
@@ -41,22 +55,8 @@ interface ThinkingRailInputToggleProps extends PropsRuntime<'conversation.input.
 export function apply(ctx: ClientContext): void {
   const sessions = ctx.sessions as unknown as ISessions
   const openDetails = () => ctx.layout.openDetails()
-  const branchActions = (): BranchActions => ({
-    openSession: (sessionId: string) => sessions.open(sessionId as SessionId),
-    sendToBranch: async (sessionId: string, prompt: string) => {
-      const session = sessions.binding(sessionId as SessionId)?.session
-      if (!session) throw new Error('当前分支尚未连接，请刷新后再试。')
-      const result = await session.prompt([{ type: 'text', text: prompt }], 'queue')
-      if (!result.ok) throw new Error(result.error.message)
-    },
-    runCommand: async (sessionId: string, line: string) => {
-      const session = sessions.binding(sessionId as SessionId)?.session
-      if (!session) throw new Error('当前分支尚未连接，请刷新后再试。')
-      const result = await session.command(line)
-      if (!result.ok) throw new Error(result.error.message)
-      if (!result.value.matched) throw new Error('DSH 尚未加载 /thinking 控制命令，请重启 DSH。')
-    },
-  })
+  const branchActions = () => createBranchActions(sessions)
+  ctx.effect(() => () => autoOpenedSessions.clear(), 'solo-thinking: right rail auto-open cache')
   ctx.slots.inject('conversation.view', () => ctx.slots.register({
     name: 'conversation.view',
     id: 'solo-thinking',
@@ -87,6 +87,183 @@ export function apply(ctx: ClientContext): void {
         inject: () => ({ openDetails }),
       }, ThinkingRailInputToggle))
   })
+
+  // Better Sidebar is optional. Cordis activates this nested fiber only when
+  // that client service is present, so the official full tab remains usable
+  // without installing another plugin.
+  ctx.inject(['betterSidebar'], (scope: ClientContext) => {
+    const sidebar = (scope as unknown as { betterSidebar: BetterSidebarService }).betterSidebar
+    scope.effect(() => {
+      const disposeTab = sidebar.registerTab({
+        id: BETTER_SIDEBAR_TAB_ID,
+        title: '头脑风暴',
+        icon: renderThinkingTreeIcon,
+        order: 30,
+        single: true,
+        component: BetterSidebarThinkingTab,
+      })
+      const disposeAutoOpen = watchBetterSidebar(sessions, sidebar)
+      return () => {
+        disposeAutoOpen()
+        disposeTab()
+      }
+    }, 'solo-thinking: Better Sidebar tab')
+  })
+}
+
+function watchBetterSidebar(sessions: ISessions, sidebar: BetterSidebarService): () => void {
+  let currentSessionId: SessionId | undefined
+  let disposeProjection: (() => void) | undefined
+  const openedSessions = new Set<string>()
+
+  const bindCurrent = () => {
+    const snapshot = sessions.list.getSnapshot()
+    const sessionId = snapshot.current
+    if (sessionId === currentSessionId && disposeProjection) return
+    disposeProjection?.()
+    disposeProjection = undefined
+    currentSessionId = sessionId
+    if (!sessionId) return
+
+    const projection = sessions.binding(sessionId)?.session.projections.faceOf('soloThinking')
+    if (!projection) return
+    const openWhenReady = () => {
+      const space = projection.getSnapshot() as ThinkingSpace | undefined
+      if (!space) return
+      const snapshot = sessions.list.getSnapshot()
+      const targets = [
+        ...space.nodes.filter(node => node.sessionId !== sessionId),
+        ...space.nodes.filter(node => node.sessionId === sessionId),
+      ]
+      for (const node of targets) {
+        const key = `${node.sessionId}:${space.rootSessionId}`
+        if (openedSessions.has(key)) continue
+        openedSessions.add(key)
+        const cwd = snapshot.byId[node.sessionId as SessionId]?.cwd
+        sidebar.openTab(
+          { type: BETTER_SIDEBAR_TAB_ID },
+          cwd ? { sessionId: node.sessionId, cwd } : { sessionId: node.sessionId },
+        )
+      }
+    }
+    disposeProjection = projection.subscribe(openWhenReady)
+    openWhenReady()
+  }
+
+  const disposeList = sessions.list.subscribe(bindCurrent)
+  bindCurrent()
+  return () => {
+    disposeList()
+    disposeProjection?.()
+  }
+}
+
+function createBranchActions(sessions: ISessions): BranchActions {
+  return {
+    openSession: (sessionId: string) => openSessionInConversation(sessions, sessionId as SessionId),
+    sendToBranch: async (sessionId: string, prompt: string) => {
+      const session = sessions.binding(sessionId as SessionId)?.session
+      if (!session) throw new Error('当前分支尚未连接，请刷新后再试。')
+      const result = await session.prompt([{ type: 'text', text: prompt }], 'queue')
+      if (!result.ok) throw new Error(result.error.message)
+    },
+    runCommand: async (sessionId: string, line: string) => {
+      const session = sessions.binding(sessionId as SessionId)?.session
+      if (!session) throw new Error('当前分支尚未连接，请刷新后再试。')
+      const result = await session.command(line)
+      if (!result.ok) throw new Error(result.error.message)
+      if (!result.value.matched) throw new Error('DSH 尚未加载 /thinking 控制命令，请重启 DSH。')
+    },
+  }
+}
+
+const CHAT_VIEW_LABELS = new Set(['对话', 'Chat'])
+
+export function activateConversationView(root: ParentNode = document): boolean {
+  const tab = Array.from(root.querySelectorAll<HTMLButtonElement>('button[role="tab"]'))
+    .find(candidate => CHAT_VIEW_LABELS.has(candidate.textContent?.trim() ?? ''))
+  if (!tab) return false
+  if (tab.getAttribute('aria-selected') !== 'true') tab.click()
+  return true
+}
+
+export function shouldOpenNodeConversation(
+  node: ThinkingNode,
+  currentSessionId: string,
+  state?: { blank?: boolean },
+): boolean {
+  const dormant = node.dormant ?? state?.blank ?? false
+  return node.sessionId !== currentSessionId && !dormant && !node.forkHandoffPending
+}
+
+function openSessionInConversation(sessions: ISessions, sessionId: SessionId): void {
+  sessions.open(sessionId)
+  if (typeof document === 'undefined' || typeof requestAnimationFrame === 'undefined') return
+
+  let attempts = 0
+  const activate = () => {
+    attempts += 1
+    const current = sessions.list.getSnapshot().current
+    if (current === sessionId && activateConversationView()) return
+    if (attempts < 10) requestAnimationFrame(activate)
+  }
+  requestAnimationFrame(activate)
+}
+
+function useObservableSnapshot<T>(source: ObservableSnapshot<T>): T {
+  return useSyncExternalStore(
+    listener => source.subscribe(listener),
+    () => source.getSnapshot(),
+    () => source.getSnapshot(),
+  )
+}
+
+function BetterSidebarThinkingTab({ ctx, scope, visible }: BetterSidebarTabProps) {
+  if (!visible) return null
+  return <BetterSidebarThinkingTabVisible ctx={ctx as unknown as ClientContext} sessionId={scope.sessionId} />
+}
+
+function BetterSidebarThinkingTabVisible({ ctx, sessionId }: { ctx: ClientContext; sessionId: string }) {
+  const sessions = ctx.sessions as unknown as ISessions
+  const useSessions = (<S,>(selector: (snapshot: ReturnType<typeof sessions.list.getSnapshot>) => S): S => (
+    selector(useObservableSnapshot(sessions.list))
+  )) as ThinkingRailProps['useSessions']
+  const useProjection = ((key: string, selector?: (value: unknown) => unknown) => {
+    const source = sessions.binding(sessionId as SessionId)?.session.projections.faceOf(key) ?? absentProjection
+    const value = useObservableSnapshot(source)
+    return selector ? selector(value) : value
+  }) as ThinkingRailProps['useProjection']
+  const space = useProjection('soloThinking')
+
+  if (!space) {
+    return (
+      <section className="str-empty" aria-label="头脑风暴尚未开始">
+        <style>{railStyles}</style>
+        {renderThinkingTreeIcon(34)}
+        <strong>这个会话还没有头脑风暴</strong>
+        <span>在对话中让 Agent 开启头脑风暴后，思考树会自动出现在这里。</span>
+      </section>
+    )
+  }
+
+  const props = {
+    sessionId,
+    useProjection,
+    useSessions,
+    ...createBranchActions(sessions),
+    openDetails: () => undefined,
+    autoOpen: false,
+  } as unknown as ThinkingRailProps
+  return <ThinkingRail {...props} />
+}
+
+function renderThinkingTreeIcon(size: number) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.35" aria-hidden="true">
+      <path d="M5 4.5 9 9m0 0 4-4.5M9 9v4.5" />
+      <circle cx="5" cy="4.5" r="2" /><circle cx="13" cy="4.5" r="2" /><circle cx="9" cy="13.5" r="2" />
+    </svg>
+  )
 }
 
 type TreeAction = 'split' | 'rename' | 'checkpoint' | 'return'
@@ -136,7 +313,7 @@ export function ThinkingView({
   if (!space || !layout || !selected) {
     return (
       <main ref={rootRef} className="st-empty">
-        <style>{styles}</style>
+        <style>{`${styles}\n${markdownStyles}`}</style>
         <div className="st-empty-mark">◎</div>
         <p className="st-kicker">SOLO THINKING</p>
         <h1>把一个问题，拆成彼此独立的思路。</h1>
@@ -149,6 +326,8 @@ export function ThinkingView({
   const parent = selected.parentId ? space.nodes.find((node) => node.id === selected.parentId) : undefined
   const siblings = space.nodes.filter((node) => node.parentId === selected.parentId && node.id !== selected.id)
   const children = space.nodes.filter((node) => node.parentId === selected.id)
+  const publishedSiblings = siblings.filter(node => node.returnedHandoff || node.checkpointHandoff).length
+  const returnedChildren = children.filter(node => node.status === 'returned' && node.returnedHandoff).length
   const isCurrentSession = selected.sessionId === sessionId
 
   const selectNode = (node: ThinkingNode) => {
@@ -213,7 +392,7 @@ export function ThinkingView({
 
   return (
     <main ref={rootRef} className="st-shell">
-      <style>{styles}</style>
+      <style>{`${styles}\n${markdownStyles}`}</style>
       <header className="st-header">
         <div>
           <p className="st-kicker">SOLO THINKING · REV {space.revision}{isCurrentSession ? ` · ${turnCount} 轮 / ${messageCount} 条对话` : ' · 已选中分支'}</p>
@@ -373,22 +552,24 @@ export function ThinkingView({
               )}
             </section>
           )}
-          <ContextCard eyebrow="来自父分支" title={parent?.title ?? '根节点'} body={selected.inheritedHandoff ?? (selected.forkHandoffPending ? '父 Agent 正在准备这个分支专属的继承 Handoff。' : parent ? '父分支为空，因此没有制造额外上下文。' : '这是头脑风暴的起点，没有父分支上下文。')} />
-          <ContextCard eyebrow="当前阶段" title={selectedDormant && selected.status === 'active' ? '未启动' : statusLabel(selected)} body={selected.returnedHandoff ?? selected.checkpointHandoff ?? (selected.forkHandoffPending ? '父 Agent 正在生成面向这个子分支的继承 Handoff；完成前分支不可输入。' : selectedDormant && selected.parentId ? '这个建议方向已经建成独立分支，但尚未运行。发送第一条指令后才会启动并进入它的对话。' : selected.checkpointRefreshingAt !== undefined ? 'Agent 正在从本分支完整对话刷新 Current State。' : selected.status === 'returning' ? 'Agent 正在把本分支对话整理成最终 Handoff；成功后父分支会收到一条持久化交接消息。' : '其他分支看不到这里的原始对话。完成一次有意义的讨论后，Agent 会发布 Current State；也可以点击“生成进展”显式刷新。')} accent={nodeTone(selected)} />
-
-          <section className="st-related">
-            <p className="st-kicker">相关分支</p>
-            {[...siblings, ...children].length === 0 ? (
-              <p className="st-muted">还没有相关分支。默认建议模式会在 Agent 识别到多个独立方向后自动建树；也可以点击图上的“＋”手动指定方向。</p>
-            ) : [...siblings, ...children].map((node) => (
-              <button key={node.id} type="button" onClick={() => selectNode(node)}>
-                <span className={`st-dot st-dot--${nodeTone(node)}`} />
-                <span>{node.title}</span>
-                <small>{node.parentId === selected.id ? '子分支' : '同级'}</small>
-                <b>↗</b>
-              </button>
-            ))}
-          </section>
+          <ContextCard eyebrow="父节点结论" title={parent?.title ?? '根节点'} body={selected.inheritedHandoff ?? (selected.forkHandoffPending ? '父 Agent 正在准备这个分支专属的继承 Handoff。' : parent ? '父分支为空，因此没有制造额外上下文。' : '这是头脑风暴的起点，没有父分支上下文。')} />
+          <ContextCard eyebrow="当前结论" title={selectedDormant && selected.status === 'active' ? '未启动' : statusLabel(selected)} body={selected.returnedHandoff ?? selected.checkpointHandoff ?? (selected.forkHandoffPending ? '父 Agent 正在生成面向这个子分支的继承 Handoff；完成前分支不可输入。' : selectedDormant && selected.parentId ? '这个建议方向已经建成独立分支，但尚未运行。发送第一条指令后才会启动并进入它的对话。' : selected.checkpointRefreshingAt !== undefined ? 'Agent 正在从本分支完整对话刷新 Current State。' : selected.status === 'returning' ? 'Agent 正在把本分支对话整理成最终 Handoff；成功后父分支会收到一条持久化交接消息。' : '其他分支看不到这里的原始对话。完成一次有意义的讨论后，Agent 会发布 Current State；也可以点击“生成进展”显式刷新。')} accent={nodeTone(selected)} />
+          <FullBranchContextCard
+            eyebrow="兄弟感知"
+            title={siblings.length ? `${siblings.length} 个同级方向` : '没有同级方向'}
+            meta={siblings.length ? `${publishedSiblings}/${siblings.length} 已发布` : '无'}
+            nodes={siblings}
+            kind="sibling"
+            onSelect={selectNode}
+          />
+          <FullBranchContextCard
+            eyebrow="子节点结论"
+            title={children.length ? `${children.length} 个子分支` : '还没有子分支'}
+            meta={children.length ? `${returnedChildren}/${children.length} 已回传` : '无'}
+            nodes={children}
+            kind="child"
+            onSelect={selectNode}
+          />
         </aside>
       </div>
     </main>
@@ -426,7 +607,7 @@ export function ThinkingRailInputToggle({ useProjection, useSession, openDetails
 }
 
 export function ThinkingRail({
-  sessionId, useProjection, useSessions, openSession, sendToBranch, runCommand, openDetails,
+  sessionId, useProjection, useSessions, openSession, sendToBranch, runCommand, openDetails, autoOpen = true,
 }: ThinkingRailProps) {
   const space = useProjection('soloThinking')
   const layout = useMemo(() => space ? computeOrbitLayout(space) : null, [space])
@@ -444,12 +625,12 @@ export function ThinkingRail({
   const [splitTitle, setSplitTitle] = useState('')
   const [controlling, setControlling] = useState(false)
   useEffect(() => {
-    if (!space) return
+    if (!autoOpen || !space) return
     const key = `${sessionId}:${space.rootSessionId}`
     if (autoOpenedSessions.has(key)) return
     autoOpenedSessions.add(key)
     openDetails()
-  }, [openDetails, sessionId, space?.rootSessionId])
+  }, [autoOpen, openDetails, sessionId, space?.rootSessionId])
 
   useEffect(() => {
     if (selectedNodeId !== null && space?.nodes.some(node => node.id === selectedNodeId)) return
@@ -464,12 +645,20 @@ export function ThinkingRail({
     && !selected.forkHandoffPending
     && selected.checkpointRefreshingAt === undefined
   const canSend = canControl && !selectedIsCurrent
+  const parent = selected.parentId ? space.nodes.find(node => node.id === selected.parentId) : undefined
+  const siblings = space.nodes.filter(node => node.parentId === selected.parentId && node.id !== selected.id)
+  const children = space.nodes.filter(node => node.parentId === selected.id)
+  const publishedSiblings = siblings.filter(node => node.returnedHandoff || node.checkpointHandoff).length
+  const returnedChildren = children.filter(node => node.status === 'returned' && node.returnedHandoff).length
 
   const selectNode = (node: ThinkingNode) => {
     setSelectedNodeId(node.id)
     setDraft('')
     setSplitOpen(false)
     setError(null)
+    if (shouldOpenNodeConversation(node, sessionId, sessionStates[node.sessionId as SessionId])) {
+      openSession(node.sessionId)
+    }
   }
 
   const send = async () => {
@@ -478,8 +667,10 @@ export function ThinkingRail({
     setSending(true)
     setError(null)
     try {
+      const openAfterStart = selectedDormant
       await sendToBranch(selected.sessionId, prompt)
       setDraft('')
+      if (openAfterStart) openSession(selected.sessionId)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -510,13 +701,21 @@ export function ThinkingRail({
 
   return (
     <section className="str-root" aria-label="思考树">
-      <style>{railStyles}</style>
+      <style>{`${railStyles}\n${markdownStyles}`}</style>
       <div className="str-heading">
         <div>
           <span>SOLO THINKING</span>
           <strong>{space.nodes.length} 个方向</strong>
         </div>
         <i className={selectedRunning ? 'is-running' : ''}>{selectedRunning ? '思考中' : selectedDormant ? '未启动' : statusLabel(selected)}</i>
+      </div>
+
+      <div className="str-legend" aria-label="节点状态图例">
+        <Legend color="#1677ff" label="发散中" />
+        <Legend color="#e7a62b" label="已发进展" />
+        <Legend color="#138a9b" label="继承中" />
+        <Legend color="#5b6ee1" label="回传中" />
+        <Legend color="#8b95a5" label="已完成" />
       </div>
 
       <div className="str-map">
@@ -530,19 +729,35 @@ export function ThinkingRail({
         {layout.points.map(point => {
           const state = sessionStates[point.node.sessionId as SessionId]
           const dormant = point.node.dormant ?? state?.blank ?? false
+          const selectedPoint = point.node.id === selected.id
           return (
-            <button
+            <div
               key={point.node.id}
-              type="button"
-              className={`str-node str-node--${nodeTone(point.node)}${point.node.id === selected.id ? ' is-selected' : ''}`}
+              className="str-node-anchor"
               style={{ left: `${point.x / layout.width * 100}%`, top: `${point.y / layout.height * 100}%` }}
-              title={point.node.title}
-              aria-label={`选择分支 ${point.node.title}`}
-              onClick={() => selectNode(point.node)}
             >
-              <b>{clip(point.node.title, point.node.depth === 0 ? 7 : 5)}</b>
-              <small>{dormant && point.node.status === 'active' ? '未启动' : statusLabel(point.node)}</small>
-            </button>
+              <button
+                type="button"
+                className={`str-node str-node--${nodeTone(point.node)}${point.node.depth === 0 ? ' is-root' : ''}${selectedPoint ? ' is-selected' : ''}`}
+                title={point.node.title}
+                aria-label={`选择分支 ${point.node.title}`}
+                onClick={() => selectNode(point.node)}
+              >
+                <b>{clip(point.node.title, point.node.depth === 0 ? 7 : 5)}</b>
+                <small>{dormant && point.node.status === 'active' ? '未启动' : statusLabel(point.node)}</small>
+              </button>
+              {selectedPoint && canControl && !selectedRunning && (
+                <button
+                  type="button"
+                  className="str-node-add"
+                  aria-label={`从 ${selected.title} 新建分支`}
+                  title="从当前节点新建分支"
+                  onClick={() => setSplitOpen(true)}
+                >
+                  ＋
+                </button>
+              )}
+            </div>
           )
         })}
       </div>
@@ -550,9 +765,10 @@ export function ThinkingRail({
       <div className="str-selected">
         <div className="str-selected-title">
           <div><span>{selected.parentId ? '已选分支' : '主方向'}</span><h3>{selected.title}</h3></div>
-          {!selectedIsCurrent && <button type="button" onClick={() => openSession(selected.sessionId)}>进入对话 ↗</button>}
+          {!selectedIsCurrent && !selectedDormant && !selected.forkHandoffPending && (
+            <button type="button" onClick={() => openSession(selected.sessionId)}>进入对话 ↗</button>
+          )}
         </div>
-        <p>{selected.returnedHandoff ?? selected.checkpointHandoff ?? selected.inheritedHandoff ?? '这个方向还没有发布 Handoff。'}</p>
 
         {canControl && (
           <div className="str-actions">
@@ -574,6 +790,8 @@ export function ThinkingRail({
         ) : canSend ? (
           <form className="str-composer" onSubmit={event => { event.preventDefault(); void send() }}>
             <textarea
+              key={selected.id}
+              autoFocus={selectedDormant}
               value={draft}
               placeholder={selectedDormant ? '发送第一条指令，启动这个分支…' : '继续这个分支，不切换主会话…'}
               aria-label={`发送消息到 ${selected.title}`}
@@ -591,9 +809,117 @@ export function ThinkingRail({
           <div className="str-current-note">{selected.forkHandoffPending ? '父 Agent 正在准备继承上下文，完成后才能输入。' : selected.status === 'returned' ? '这个分支已经回传，只能查看历史。' : '当前分支暂时不可输入。'}</div>
         )}
         {error && <div className="str-error" role="alert">{error}</div>}
+
+        <div className="str-context-index" aria-label="分支上下文">
+          <RailContextSection
+            key={`current:${selected.id}`}
+            eyebrow="当前结论"
+            title={selectedDormant && selected.status === 'active' ? '未启动' : statusLabel(selected)}
+            meta={selected.returnedHandoff ? '最终回传' : selected.checkpointHandoff ? '阶段进展' : '尚未发布'}
+            tone={nodeTone(selected)}
+          >
+            <HandoffMarkdown text={selected.returnedHandoff
+                ?? selected.checkpointHandoff
+                ?? (selectedDormant
+                  ? '这个方向尚未启动，因此还没有对外发布结论。'
+                  : '这个方向尚未发布 Current State。完成一次有意义的讨论后，Agent 会自动整理可共享结论。')} />
+          </RailContextSection>
+
+          <RailContextSection
+            key={`parent:${selected.id}`}
+            eyebrow="父节点结论"
+            title={parent?.title ?? '根节点'}
+            meta={parent ? selected.inheritedHandoff ? '已继承' : selected.forkHandoffPending ? '准备中' : '无额外交接' : '思考起点'}
+          >
+            <HandoffMarkdown text={selected.inheritedHandoff
+                ?? (selected.forkHandoffPending
+                  ? '父 Agent 正在准备这个分支专属的继承 Handoff。完成前不会复制或暴露父分支原始对话。'
+                  : parent
+                    ? '父分支没有为这里制造额外上下文。'
+                    : '这是整棵思考树的起点，没有父节点上下文。')} />
+          </RailContextSection>
+
+          <RailContextSection
+            key={`siblings:${selected.id}`}
+            eyebrow="兄弟感知"
+            title={siblings.length ? `${siblings.length} 个同级方向` : '没有同级方向'}
+            meta={siblings.length ? `${publishedSiblings}/${siblings.length} 已发布` : '无'}
+          >
+            <RailBranchContextList nodes={siblings} kind="sibling" onSelect={selectNode} />
+          </RailContextSection>
+
+          <RailContextSection
+            key={`children:${selected.id}`}
+            eyebrow="子节点结论"
+            title={children.length ? `${children.length} 个子分支` : '还没有子分支'}
+            meta={children.length ? `${returnedChildren}/${children.length} 已回传` : '无'}
+          >
+            <RailBranchContextList nodes={children} kind="child" onSelect={selectNode} />
+          </RailContextSection>
+        </div>
       </div>
     </section>
   )
+}
+
+function RailContextSection({ eyebrow, title, meta, defaultOpen = false, tone = 'active', children }: {
+  eyebrow: string
+  title: string
+  meta: string
+  defaultOpen?: boolean
+  tone?: ReturnType<typeof nodeTone>
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <details
+      className={`str-context-section str-context-section--${tone}`}
+      open={open}
+      onToggle={event => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        <div><span>{eyebrow}</span><strong>{title}</strong></div>
+        <small>{meta}</small>
+        <i aria-hidden="true">⌄</i>
+      </summary>
+      <div className="str-context-content">{children}</div>
+    </details>
+  )
+}
+
+function RailBranchContextList({ nodes, kind, onSelect }: {
+  nodes: readonly ThinkingNode[]
+  kind: 'sibling' | 'child'
+  onSelect: (node: ThinkingNode) => void
+}) {
+  if (nodes.length === 0) {
+    return <div className="str-context-empty">{kind === 'sibling' ? '当前节点没有兄弟分支。' : '从图中“＋”可以创建一个子分支。'}</div>
+  }
+  return (
+    <div className="str-context-list">
+      {nodes.map(node => {
+        const handoff = node.returnedHandoff ?? node.checkpointHandoff
+        const phase = node.returnedHandoff ? '最终回传' : node.checkpointHandoff ? '阶段进展' : statusLabel(node)
+        return (
+          <article key={node.id}>
+            <button type="button" onClick={() => onSelect(node)}>
+              <span className={`st-dot st-dot--${nodeTone(node)}`} />
+              <span><strong>{node.title}</strong><small>{phase}</small></span>
+              <b>↗</b>
+            </button>
+            <HandoffMarkdown
+              compact
+              text={handoff ?? (kind === 'sibling' ? '尚未发布可供兄弟分支读取的结论。' : '尚未向当前节点回传最终结论。')}
+            />
+          </article>
+        )
+      })}
+    </div>
+  )
+}
+
+function HandoffMarkdown({ text, compact = false }: { text: string; compact?: boolean }) {
+  return <div className={`st-markdown${compact ? ' is-compact' : ''}`}><MarkdownText text={text} /></div>
 }
 
 function ContextCard({ eyebrow, title, body, accent = 'active' }: {
@@ -606,7 +932,48 @@ function ContextCard({ eyebrow, title, body, accent = 'active' }: {
     <section className={`st-card st-card--${accent}`}>
       <p className="st-kicker">{eyebrow}</p>
       <h2>{title}</h2>
-      <div className="st-handoff">{body}</div>
+      <div className="st-handoff"><HandoffMarkdown text={body} /></div>
+    </section>
+  )
+}
+
+function FullBranchContextCard({ eyebrow, title, meta, nodes, kind, onSelect }: {
+  eyebrow: string
+  title: string
+  meta: string
+  nodes: readonly ThinkingNode[]
+  kind: 'sibling' | 'child'
+  onSelect: (node: ThinkingNode) => void
+}) {
+  return (
+    <section className="st-related st-related-context">
+      <header className="st-related-heading">
+        <div><p className="st-kicker">{eyebrow}</p><h2>{title}</h2></div>
+        <small>{meta}</small>
+      </header>
+      {nodes.length === 0 ? (
+        <p className="st-muted">{kind === 'sibling' ? '当前节点没有兄弟分支。' : '还没有子分支；可以从图上的“＋”创建。'}</p>
+      ) : (
+        <div className="st-related-list">
+          {nodes.map(node => {
+            const handoff = node.returnedHandoff ?? node.checkpointHandoff
+            const phase = node.returnedHandoff ? '最终回传' : node.checkpointHandoff ? '阶段进展' : statusLabel(node)
+            return (
+              <article key={node.id}>
+                <button type="button" onClick={() => onSelect(node)}>
+                  <span className={`st-dot st-dot--${nodeTone(node)}`} />
+                  <span>{node.title}</span>
+                  <small>{phase}</small>
+                  <b>↗</b>
+                </button>
+                <div className="st-related-handoff">
+                  <HandoffMarkdown compact text={handoff ?? (kind === 'sibling' ? '尚未发布可供兄弟分支读取的结论。' : '尚未向当前节点回传最终结论。')} />
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 }
@@ -682,6 +1049,10 @@ function clip(text: string, max: number): string {
 }
 
 const railStyles = `
+  .str-empty { display: grid; place-items: center; gap: 10px; min-height: 260px; padding: 28px 22px; color: var(--dsw-alias-label-primary, #14233e); text-align: center; font-family: var(--ds-font-family, Inter, ui-sans-serif, system-ui, sans-serif); }
+  .str-empty svg { color: #1677ff; }
+  .str-empty strong { font-size: 14px; }
+  .str-empty span { max-width: 240px; color: var(--dsw-alias-label-tertiary, #718199); font-size: 11px; line-height: 1.55; }
   .str-toggle { display: inline-flex; align-items: center; gap: 5px; height: 26px; border: 1px solid rgba(22, 119, 255, .28); border-radius: 7px; background: rgba(22, 119, 255, .07); padding: 0 8px; color: #075fd6; font: 600 12px/1 inherit; cursor: pointer; }
   .str-toggle:hover { border-color: #1677ff; background: rgba(22, 119, 255, .12); }
   .str-toggle:focus-visible { outline: 2px solid #1677ff; outline-offset: 2px; }
@@ -691,19 +1062,23 @@ const railStyles = `
   .str-input-toggle:focus-visible { outline: 2px solid #1677ff; outline-offset: 2px; }
   .str-input-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.35; }
   .str-root, .str-root * { box-sizing: border-box; }
-  .str-root { margin: -2px 0 16px; padding-bottom: 16px; border-bottom: 1px solid var(--dsw-alias-border-l2, #dce5f2); color: var(--dsw-alias-label-primary, #14233e); font-family: var(--ds-font-family, Inter, ui-sans-serif, system-ui, sans-serif); }
+  .str-root { display: flex; flex: 1; flex-direction: column; width: 100%; height: 100%; min-height: 0; max-height: 100%; margin: -2px 0 0; overflow: hidden; border-bottom: 1px solid var(--dsw-alias-border-l2, #dce5f2); color: var(--dsw-alias-label-primary, #14233e); font-family: var(--ds-font-family, Inter, ui-sans-serif, system-ui, sans-serif); }
   .str-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
   .str-heading > div { display: grid; gap: 2px; }
   .str-heading span, .str-selected-title span { color: var(--dsw-alias-label-tertiary, #718199); font: 700 9px/1.3 var(--ds-font-family-code, ui-monospace, monospace); letter-spacing: .12em; }
   .str-heading strong { font-size: 14px; font-weight: 650; }
   .str-heading > i { border: 1px solid rgba(22, 119, 255, .22); border-radius: 999px; background: rgba(22, 119, 255, .07); padding: 4px 7px; color: #075fd6; font-size: 9px; font-style: normal; font-weight: 700; }
   .str-heading > i.is-running { animation: str-breathe 1.6s ease-in-out infinite; }
-  .str-map { position: relative; height: 230px; overflow: hidden; border: 1px solid rgba(22, 119, 255, .2); border-radius: 10px; background-color: #f8fbff; background-image: linear-gradient(#e3ebf7 1px, transparent 1px), linear-gradient(90deg, #e3ebf7 1px, transparent 1px); background-size: 22px 22px; }
+  .str-legend { display: flex; flex-wrap: wrap; gap: 5px 11px; margin: 0 0 8px; color: var(--dsw-alias-label-tertiary, #718199); font-size: 8px; line-height: 1; }
+  .str-legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .str-legend i { width: 6px; height: 6px; border-radius: 50%; background: var(--legend-color); }
+  .str-map { position: relative; flex: 1 1 420px; min-height: 240px; overflow: hidden; border: 1px solid rgba(22, 119, 255, .2); border-radius: 10px; background-color: #f8fbff; background-image: linear-gradient(#e3ebf7 1px, transparent 1px), linear-gradient(90deg, #e3ebf7 1px, transparent 1px); background-size: 22px 22px; }
   .str-map::after { content: ""; position: absolute; inset: 7px; border: 1px solid rgba(22, 119, 255, .09); border-radius: 6px; pointer-events: none; }
   .str-map svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   .str-map line { stroke: #a9c3e8; stroke-width: 2; stroke-dasharray: 5 6; }
+  .str-node-anchor { position: absolute; z-index: 1; width: 0; height: 0; }
   .str-node { position: absolute; z-index: 1; display: grid; place-content: center; gap: 1px; width: 48px; height: 48px; transform: translate(-50%, -50%); border: 2px solid #1677ff; border-radius: 50%; background: #fff; padding: 4px; color: #14233e; text-align: center; cursor: pointer; box-shadow: 0 5px 13px rgba(32, 79, 150, .12); transition: transform .15s ease, border-width .15s ease; }
-  .str-node:first-of-type { width: 58px; height: 58px; }
+  .str-node.is-root { width: 58px; height: 58px; }
   .str-node:hover, .str-node:focus-visible { z-index: 3; transform: translate(-50%, -50%) scale(1.08); outline: none; }
   .str-node.is-selected { z-index: 2; border-width: 4px; background: #eaf3ff; }
   .str-node--checkpoint { border-color: #d89a24; }
@@ -712,11 +1087,12 @@ const railStyles = `
   .str-node--returned { border-color: #8995a7; background: #f1f3f6; }
   .str-node b { overflow: hidden; font-size: 8px; line-height: 1.1; text-overflow: ellipsis; }
   .str-node small { color: #718199; font: 600 6px/1.1 var(--ds-font-family-code, ui-monospace, monospace); }
-  .str-selected { margin-top: 10px; border-left: 3px solid #1677ff; background: var(--dsw-alias-bg-layer-1, #f7f9fc); padding: 11px 11px 11px 12px; }
+  .str-node-add { position: absolute; z-index: 4; top: -40px; left: 15px; display: grid; place-items: center; width: 24px; height: 24px; border: 3px solid #f8fbff; border-radius: 50%; background: #1677ff; padding: 0; color: #fff; font-size: 14px; font-weight: 800; line-height: 1; cursor: pointer; box-shadow: 0 5px 12px rgba(22, 119, 255, .28); }
+  .str-node-add:hover, .str-node-add:focus-visible { background: #075fd6; outline: 2px solid rgba(22, 119, 255, .28); outline-offset: 2px; }
+  .str-selected { flex: 0 1 auto; min-height: 0; max-height: 58%; margin-top: 10px; overflow-y: auto; scrollbar-gutter: stable; border-left: 3px solid #1677ff; background: var(--dsw-alias-bg-layer-1, #f7f9fc); padding: 11px 11px 11px 12px; }
   .str-selected-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
   .str-selected-title h3 { margin: 2px 0 0; font-size: 14px; line-height: 1.3; }
   .str-selected-title button { flex: none; border: 0; background: transparent; padding: 3px 0; color: #075fd6; font-size: 10px; font-weight: 650; cursor: pointer; }
-  .str-selected > p { display: -webkit-box; overflow: hidden; margin: 8px 0 0; color: var(--dsw-alias-label-secondary, #4d607e); font-size: 11px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
   .str-actions { display: flex; gap: 5px; margin-top: 9px; }
   .str-actions button { flex: 1; border: 1px solid var(--dsw-alias-border-l2, #cbd8e9); border-radius: 6px; background: var(--dsw-alias-bg-base, #fff); padding: 6px 4px; color: var(--dsw-alias-label-secondary, #425573); font-size: 9px; font-weight: 650; cursor: pointer; }
   .str-actions button:hover:not(:disabled) { border-color: #1677ff; color: #075fd6; }
@@ -734,13 +1110,58 @@ const railStyles = `
   .str-composer button:disabled, .str-split button:disabled { opacity: .5; cursor: wait; }
   .str-current-note { margin-top: 9px; border: 1px dashed rgba(22, 119, 255, .25); border-radius: 7px; padding: 8px; color: var(--dsw-alias-label-tertiary, #657790); font-size: 10px; line-height: 1.5; }
   .str-error { margin-top: 7px; border-left: 2px solid #d53f52; background: #fff1f3; padding: 6px 8px; color: #9b2030; font-size: 10px; line-height: 1.45; }
+  .str-context-index { display: grid; gap: 6px; margin-top: 10px; }
+  .str-context-section { overflow: hidden; border: 1px solid var(--dsw-alias-border-l2, #d3deed); border-left: 3px solid #1677ff; border-radius: 7px; background: var(--dsw-alias-bg-base, #fff); }
+  .str-context-section--checkpoint { border-left-color: #e7a62b; }
+  .str-context-section--preparing { border-left-color: #138a9b; }
+  .str-context-section--refreshing, .str-context-section--returning { border-left-color: #5b6ee1; }
+  .str-context-section--returned { border-left-color: #8b95a5; }
+  .str-context-section summary { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; min-height: 42px; padding: 7px 9px; list-style: none; cursor: pointer; user-select: none; }
+  .str-context-section summary::-webkit-details-marker { display: none; }
+  .str-context-section summary > div { display: grid; min-width: 0; gap: 2px; }
+  .str-context-section summary span { color: var(--dsw-alias-label-tertiary, #718199); font: 700 8px/1.2 var(--ds-font-family-code, ui-monospace, monospace); letter-spacing: .08em; }
+  .str-context-section summary strong { overflow: hidden; color: var(--dsw-alias-label-primary, #14233e); font-size: 11px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+  .str-context-section summary small { border-radius: 999px; background: var(--dsw-alias-bg-layer-1, #eef3f9); padding: 3px 6px; color: var(--dsw-alias-label-tertiary, #718199); font-size: 8px; font-weight: 700; white-space: nowrap; }
+  .str-context-section summary > i { color: #718199; font-size: 13px; font-style: normal; transition: transform .15s ease; }
+  .str-context-section[open] summary > i { transform: rotate(180deg); }
+  .str-context-content { border-top: 1px solid var(--dsw-alias-border-l3, #e7edf5); padding: 9px; }
+  .str-context-empty { color: var(--dsw-alias-label-tertiary, #718199); font-size: 10px; line-height: 1.5; }
+  .str-context-list { display: grid; gap: 8px; }
+  .str-context-list article { overflow: hidden; border: 1px solid var(--dsw-alias-border-l3, #e4ebf4); border-radius: 6px; }
+  .str-context-list article > button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; width: 100%; border: 0; background: var(--dsw-alias-bg-layer-1, #f7f9fc); padding: 7px 8px; color: var(--dsw-alias-label-primary, #14233e); text-align: left; cursor: pointer; }
+  .str-context-list article > button:hover strong { color: #075fd6; }
+  .str-context-list article > button > span:nth-child(2) { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .str-context-list article > button strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  .str-context-list article > button small { flex: none; color: var(--dsw-alias-label-tertiary, #718199); font-size: 8px; }
+  .str-context-list article > button b { color: #1677ff; font-size: 10px; }
+  .str-context-list .st-markdown { max-height: 150px; overflow: auto; padding: 8px; }
   @media (max-height: 700px) {
-    .str-map { height: 140px; }
-    .str-selected > p { -webkit-line-clamp: 2; }
+    .str-map { min-height: 180px; }
+    .str-selected { max-height: 62%; }
     .str-composer textarea { min-height: 48px; }
   }
   @keyframes str-breathe { 50% { box-shadow: 0 0 0 4px rgba(22, 119, 255, .12); } }
-  @media (prefers-reduced-motion: reduce) { .str-node { transition: none; } .str-heading > i.is-running { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .str-node, .str-context-section summary > i { transition: none; } .str-heading > i.is-running { animation: none; } }
+`
+
+const markdownStyles = `
+  .st-markdown { min-width: 0; color: var(--dsw-alias-label-secondary, #40526f); font-size: 11px; line-height: 1.58; overflow-wrap: anywhere; }
+  .st-markdown :where(h1, h2, h3, h4, h5, h6) { margin: 10px 0 5px; color: var(--dsw-alias-label-primary, #14233e); font-weight: 700; line-height: 1.3; letter-spacing: 0; }
+  .st-markdown h1 { font-size: 15px; }
+  .st-markdown h2 { font-size: 13px; }
+  .st-markdown :where(h3, h4, h5, h6) { font-size: 11px; }
+  .st-markdown :where(p, ul, ol, blockquote, pre, table) { margin: 6px 0; }
+  .st-markdown :where(ul, ol) { padding-left: 18px; }
+  .st-markdown li + li { margin-top: 3px; }
+  .st-markdown blockquote { border-left: 2px solid #a9c3e8; padding-left: 8px; color: var(--dsw-alias-label-tertiary, #718199); }
+  .st-markdown :not(pre) > code { border-radius: 4px; background: var(--dsw-alias-markdown-inline-code, #eef3f9); padding: 1px 4px; color: #39516f; font-family: var(--ds-font-family-code, ui-monospace, monospace); font-size: .92em; }
+  .st-markdown pre { overflow: auto; border-radius: 5px; background: #eff4fa; padding: 8px; font-family: var(--ds-font-family-code, ui-monospace, monospace); font-size: 10px; }
+  .st-markdown a { color: #075fd6; }
+  .st-markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+  .st-markdown :where(th, td) { border-bottom: 1px solid var(--dsw-alias-border-l2, #d3deed); padding: 4px 6px; text-align: left; }
+  .st-markdown > div > :first-child { margin-top: 0; }
+  .st-markdown > div > :last-child { margin-bottom: 0; }
+  .st-markdown.is-compact { font-size: 10px; line-height: 1.5; }
 `
 
 const styles = `
@@ -823,13 +1244,18 @@ const styles = `
   .st-card--returning::before { background: #5b6ee1; }
   .st-card--returned::before { background: #8b95a5; }
   .st-card h2 { margin: 6px 0 13px; font-size: 20px; letter-spacing: -.025em; }
-  .st-handoff { max-height: 250px; overflow: auto; color: #40526f; white-space: pre-wrap; font-size: 13px; line-height: 1.65; }
+  .st-handoff { max-height: 250px; overflow: auto; color: #40526f; font-size: 13px; line-height: 1.65; }
   .st-related { padding-bottom: 10px; }
-  .st-related .st-kicker { margin-bottom: 12px; }
-  .st-related button { width: 100%; display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 9px; border: 0; border-top: 1px solid #e1e8f3; background: transparent; padding: 13px 0; color: #20304a; text-align: left; cursor: pointer; }
-  .st-related button:hover span:nth-child(2) { color: #075fd6; }
-  .st-related small { color: #7b899e; font: 600 9px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
-  .st-related b { color: #1677ff; }
+  .st-related-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .st-related-heading h2 { margin: 5px 0 0; font-size: 20px; letter-spacing: -.025em; }
+  .st-related-heading > small { border-radius: 999px; background: #eef3f9; padding: 4px 8px; color: #718199; font: 700 9px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+  .st-related-list article { border-top: 1px solid #e1e8f3; }
+  .st-related-list article > button { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px; border: 0; background: transparent; padding: 13px 0 9px; color: #20304a; text-align: left; cursor: pointer; }
+  .st-related-list article > button:hover span:nth-child(2) { color: #075fd6; }
+  .st-related-list article > button > span:nth-child(2) { overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+  .st-related-list article > button small { color: #7b899e; font: 600 9px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+  .st-related-list article > button b { color: #1677ff; }
+  .st-related-handoff { max-height: 150px; margin: 0 0 12px 17px; overflow: auto; border-left: 2px solid #dce6f4; padding-left: 10px; }
   .st-dot { width: 8px; height: 8px; border-radius: 50%; background: #1677ff; }
   .st-dot--checkpoint { background: #e7a62b; }
   .st-dot--preparing { background: #138a9b; }

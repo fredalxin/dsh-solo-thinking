@@ -4,7 +4,10 @@
 
 > Solo-style isolated brainstorm branches, automatic Handoffs, and a visual thinking tree for DeepSeek Harness.
 
-![DSH Solo Thinking 完整头脑风暴 Tab](docs/assets/solo-thinking-right-rail.png)
+![DSH Solo Thinking 默认完整头脑风暴 Tab](docs/assets/solo-thinking-full-tab.png)
+
+> [!NOTE]
+> 上图是 Solo Thinking 自带的完整“头脑风暴”Tab，只安装本插件即可使用。对话右侧栏是可选增强，需要同时安装 [Better Sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)。
 
 ## 核心能力
 
@@ -15,37 +18,79 @@
 - 输入不串线：主输入框只发给当前 Session；思考树可直接向选中的其他分支发送；只有“进入对话”会导航。
 - 可回放持久化：树状态写入 DSH append-only Session 事件并通过 Projection 恢复。
 
-## 兼容性
+## 兼容性与界面
 
-| 环境 | 支持情况 |
-|---|---|
-| 官方 DSH `0.1.0-rc.6` | Thinking 工具、自动建议、分支 Session、Handoff、Workspace 继承和完整“头脑风暴”标签页 |
-| 应用本仓库可选宿主补丁的 DSH | 在上述能力之外增加 Solo 式对话右栏，并向 Host 注册插件持久化事件类型 |
+| 安装组合 | 顶部完整 Tab | 对话右侧栏 | 支持情况 |
+|---|---:|---:|---|
+| 官方 DSH `0.1.0-rc.6` + Solo Thinking | ✓ | — | Thinking 工具、自动建议、分支 Session、Handoff、Workspace 继承和完整上下文 |
+| 再安装 Better Sidebar `>=0.12.1` | ✓ | ✓ | 在对话右侧查看思考树、选择节点、控制分支并直接发消息 |
 
-插件不会覆盖官方工具详情。官方 DSH 没有 `conversation.details.aux` 时会自动降级到“头脑风暴”标签页；右栏补丁及其精确适用版本见 [`patches/README.md`](patches/README.md)。
+Better Sidebar 是**右栏功能依赖**，但不是 Solo Thinking 核心能力的硬依赖：包中声明为 optional peer，运行时通过公开 `registerTab` 服务软检测，不会被重复打包。没有安装或运行中被卸载时，完整顶部 Tab 与 Host 侧 Thinking 能力仍然可用。`dsh-web-ui` 的 AionUI 文件/预览右栏目前没有第三方 Tab 注册接口，因此本插件不会依赖其 DOM 结构；使用它时继续用完整标签页。可选宿主补丁及其精确适用版本见 [`patches/README.md`](patches/README.md)。
 
 ## 安装
 
 要求 Node.js `^22.19.0 || >=24.0.0` 和 DSH `0.1.0-rc.6`。
 
-### 从 GitHub 安装
-
-仓库提交预构建 `lib/`，安装时不执行构建脚本，也不需要 pnpm `allowBuilds`：
+### 官方 npm 单行安装
 
 ```bash
-dsh plugin --profile web add github:fredalxin/dsh-plugin-solo-thinking#v0.1.17
+dsh plugin --profile web add dsh-better-sidebar@^0.12.1 dsh-plugin-solo-thinking@0.1.18
+```
+
+两个包都发布在 npm 官方 Registry，安装后会由各自的 `dsh.bundle.patch` 自动挂载。Solo Thinking 将 Better Sidebar 声明为可选 peer，避免重复实例；DSH 目前不会自动挂载传递依赖，所以命令中需要把两个插件都列为 profile 的直接依赖。若 pnpm 拦截 `node-pty` 构建或新包发布时间门禁，可使用下面的 Release 安装器。
+
+Better Sidebar 0.12.1 可能打印宿主 DSH/React peer 警告；不要为消除提示把整套 DSH 或 React 重复装进 profile。已确认 Solo Thinking 自身没有缺失 peer，警告来源与上游 `@xterm/addon-fit` 版本债务见 [依赖审计](docs/DSH-PLUGIN-DESIGN-AUDIT.md#profile-peer-dependency-检查)。
+
+### 一行安装（自动使用最新 Release）
+
+macOS / Linux（Windows 可在 Git Bash 或 WSL 中使用）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/scripts/install.sh | bash
+```
+
+Windows PowerShell 5.1+ / pwsh：
+
+```powershell
+irm https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/scripts/install.ps1 | iex
+```
+
+安装器会先为 Better Sidebar 精确放行 `node-pty` / `protobufjs` 构建并将其挂载为 profile 的直接插件，再解析最新 Solo Thinking Release、下载预构建 `.tgz` 与 `.sha256`、校验后交给官方 `dsh plugin add`，最后通过 `--dump-config` 验证两个 bundle。它不会修改 DSH 源码；对 `pnpm-workspace.yaml` 的改动仅限上述构建白名单和 `dsh-better-sidebar` 的发布时间例外，重复执行保持幂等。
+
+固定版本或先预览：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/scripts/install.sh | bash -s -- 0.1.18
+curl -fsSL https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/scripts/install.sh | bash -s -- 0.1.18 --dry-run
+```
+
+```powershell
+& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/scripts/install.ps1'))) -Version 0.1.18 -DryRun
+```
+
+### 不执行远程脚本：官方 CLI 单行安装（固定版本）
+
+仓库提交了预构建 `lib/`，因此也可以直接固定 GitHub tag 安装；macOS、Linux 和 Windows 通用，不执行插件构建脚本：
+
+```bash
+dsh plugin --profile web add github:fredalxin/dsh-solo-thinking#v0.1.18
+```
+
+安装完成后启动或重启 DSH，再硬刷新浏览器：
+
+```bash
 dsh --profile web --dump-config
 dsh --profile web
 ```
 
 源码运行 DSH 时，把命令中的 `dsh` 换成 `pnpm dsh`。
 
-### 从 GitHub Release 安装
+### 下载后离线安装
 
-下载 Release 中的 `dsh-plugin-solo-thinking-0.1.17.tgz` 后执行：
+下载 Release 中的 `dsh-plugin-solo-thinking-0.1.18.tgz` 后执行：
 
 ```bash
-dsh plugin --profile web add ./dsh-plugin-solo-thinking-0.1.17.tgz
+dsh plugin --profile web add ./dsh-plugin-solo-thinking-0.1.18.tgz
 dsh --profile web
 ```
 
@@ -55,7 +100,7 @@ dsh --profile web
 npm ci
 npm run verify
 npm pack
-dsh plugin --profile web add ./dsh-plugin-solo-thinking-0.1.17.tgz
+dsh plugin --profile web add ./dsh-plugin-solo-thinking-0.1.18.tgz
 ```
 
 卸载：
@@ -63,6 +108,21 @@ dsh plugin --profile web add ./dsh-plugin-solo-thinking-0.1.17.tgz
 ```bash
 dsh plugin --profile web remove dsh-plugin-solo-thinking
 ```
+
+## 右栏模式
+
+> [!IMPORTANT]
+> 以下“对话 + 右侧头脑风暴”界面只有在 Better Sidebar 已安装并启用时才会出现。只安装 Solo Thinking 时，请使用对话顶部的完整“头脑风暴”Tab。
+
+![DSH 对话与 Better Sidebar 头脑风暴右栏](docs/assets/solo-thinking-better-sidebar.png)
+
+推荐安装命令已经包含 [DSH Better Sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) `0.12.1+`。如果只安装了 Solo Thinking，可以单独补装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.sh | bash -s -- 0.12.1
+```
+
+本插件会软检测 `ctx.betterSidebar`，注册一个独立的“头脑风暴”Tab；当前会话第一次出现思考树时会自动准备该 Tab，也可以在 Better Sidebar 的“＋ 新建标签页”菜单里手动打开。思考图会占满折叠上下文后剩余的纵向空间，父节点结论、当前结论、兄弟感知和子节点结论默认折叠、按需展开。Better Sidebar 未安装或被卸载时，官方完整标签页仍提供同样四类上下文和全部 Host 侧 Thinking 能力。
 
 ## 30 秒开始使用
 
@@ -85,7 +145,9 @@ Agent 会调用 `thinking_start`，随后在适合分裂时调用一次 `thinkin
 
 Handoff 使用简短 Markdown，覆盖目标、已确认结论、证据、风险、开放问题和下一步。兄弟分支与父分支不会被后台自动唤醒，而是在自己的下一次显式模型轮消费最新 Handoff。
 
-![返回后的分支](docs/assets/solo-thinking-returned.png)
+## DSH 架构对齐
+
+插件遵循 DSH 的服务依赖、effect 回卷、bundle/profile 分层和双端 Client Module 模型。Better Sidebar 是可选服务能力：运行时卸载不会拖垮主插件，恢复后会重新注册侧栏；但新增或删除 npm 插件会改变 DSH 的 Client Module 包集合，因此仍需重启。逐项结论和保留的 RC 兼容层见 [DSH 插件设计对齐审计](docs/DSH-PLUGIN-DESIGN-AUDIT.md)。
 
 ## Thinking 工具
 
@@ -104,7 +166,8 @@ Handoff 使用简短 Markdown，覆盖目标、已确认结论、证据、风险
 - 插件不调用外部网络服务，不读取其他分支的原始对话。
 - 跨分支信息只来自显式 Handoff；发送目标由 DSH Session ID 隔离。
 - 状态随 DSH Session persistence 保存；卸载插件不会主动删除历史 Session 数据。
-- GitHub 安装使用提交进仓库的预构建产物，不执行第三方安装脚本。生产环境仍建议固定 tag 或 commit。
+- 插件包使用预构建产物且没有安装生命周期脚本；生产环境建议固定 npm 版本、GitHub tag 或 Release 校验安装器。
+- `curl | bash` / `irm | iex` 会执行公开仓库中的远程安装器；不接受这一信任模型时，请使用透明的官方 CLI 单行命令，或先下载并审阅 [`scripts/install.sh`](scripts/install.sh) / [`scripts/install.ps1`](scripts/install.ps1)。
 
 ## 开发与验证
 

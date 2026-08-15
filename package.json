@@ -1,15 +1,18 @@
 {
   "name": "dsh-plugin-solo-thinking",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "Solo-style isolated brainstorm branches and Handoffs for DeepSeek Harness",
   "author": "fredalxin",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fredalxin/dsh-plugin-solo-thinking.git"
+    "url": "git+https://github.com/fredalxin/dsh-solo-thinking.git"
   },
-  "homepage": "https://github.com/fredalxin/dsh-plugin-solo-thinking#readme",
+  "homepage": "https://github.com/fredalxin/dsh-solo-thinking#readme",
   "bugs": {
-    "url": "https://github.com/fredalxin/dsh-plugin-solo-thinking/issues"
+    "url": "https://github.com/fredalxin/dsh-solo-thinking/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "packageManager": "npm@11.6.2",
   "type": "module",
@@ -35,6 +38,8 @@
     "scripts/e2e-provider.mjs",
     "scripts/e2e-run.mjs",
     "scripts/e2e.patch.yml",
+    "scripts/install.sh",
+    "scripts/install.ps1",
     "patches/*.patch",
     "patches/*.md",
     "README.md",
@@ -49,7 +54,8 @@
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-ui-layout"
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-primitives"
       ],
       "platform": "web"
     }
@@ -83,6 +89,7 @@
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-conversation": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-layout": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-commands": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
@@ -93,6 +100,7 @@
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-workspace": "^0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.1",
+    "dsh-better-sidebar": "^0.12.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
@@ -103,6 +111,7 @@
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-conversation": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-layout": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-commands": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
@@ -144,6 +153,9 @@
     "@deepseek-ai/dsh-client-ui-layout": {
       "optional": true
     },
+    "@deepseek-ai/dsh-client-ui-primitives": {
+      "optional": true
+    },
     "@deepseek-ai/dsh-client-ui-slots": {
       "optional": true
     },
@@ -172,6 +184,9 @@
       "optional": true
     },
     "@deepseek-ai/schemastery": {
+      "optional": true
+    },
+    "dsh-better-sidebar": {
       "optional": true
     },
     "react": {

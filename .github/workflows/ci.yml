@@ -18,4 +18,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: bash scripts/install.sh 0.1.18 --dry-run
+      - shell: pwsh
+        run: ./scripts/install.ps1 -Version 0.1.18 -DryRun
       - run: npm run verify

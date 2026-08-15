@@ -7,6 +7,7 @@ const external = [
   '@deepseek-ai/dsh-llm',
   '@deepseek-ai/dsh-client-runtime/client',
   '@deepseek-ai/dsh-client-ui-conversation/client',
+  '@deepseek-ai/dsh-client-ui-primitives',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-session',
   '@deepseek-ai/dsh-session-projection',
