@@ -31,13 +31,13 @@ Better Sidebar 是**右栏功能依赖**，但不是 Solo Thinking 核心能力�
 
 要求 Node.js `^22.19.0 || >=24.0.0` 和 DSH `0.1.0-rc.6`。
 
-### 官方 npm 单行安装
+### 官方 npm 单行安装（推荐，自动使用 latest）
 
 ```bash
-dsh plugin --profile web add dsh-better-sidebar@^0.12.1 dsh-plugin-solo-thinking@0.1.18
+dsh plugin --profile web add dsh-better-sidebar dsh-plugin-solo-thinking
 ```
 
-两个包都发布在 npm 官方 Registry，安装后会由各自的 `dsh.bundle.patch` 自动挂载。Solo Thinking 将 Better Sidebar 声明为可选 peer，避免重复实例；DSH 目前不会自动挂载传递依赖，所以命令中需要把两个插件都列为 profile 的直接依赖。若 pnpm 拦截 `node-pty` 构建或新包发布时间门禁，可使用下面的 Release 安装器。
+两个包都发布在 npm 官方 Registry；不指定版本时会自动安装各自 `latest` 标签对应的版本。安装后会由各自的 `dsh.bundle.patch` 自动挂载。Solo Thinking 将 Better Sidebar 声明为可选 peer，避免重复实例；DSH 目前不会自动挂载传递依赖，所以命令中需要把两个插件都列为 profile 的直接依赖。若 pnpm 拦截 `node-pty` 构建或新包发布时间门禁，可使用下面的 Release 安装器。
 
 Better Sidebar 0.12.1 可能打印宿主 DSH/React peer 警告；不要为消除提示把整套 DSH 或 React 重复装进 profile。已确认 Solo Thinking 自身没有缺失 peer，警告来源与上游 `@xterm/addon-fit` 版本债务见 [依赖审计](docs/DSH-PLUGIN-DESIGN-AUDIT.md#profile-peer-dependency-检查)。
 
