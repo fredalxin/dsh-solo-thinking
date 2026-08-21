@@ -60,12 +60,12 @@ irm https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/scripts/i
 固定版本或先预览：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/scripts/install.sh | bash -s -- 0.1.18
-curl -fsSL https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/scripts/install.sh | bash -s -- 0.1.18 --dry-run
+curl -fsSL https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/scripts/install.sh | bash -s -- 0.1.19
+curl -fsSL https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/scripts/install.sh | bash -s -- 0.1.19 --dry-run
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/scripts/install.ps1'))) -Version 0.1.18 -DryRun
+& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/scripts/install.ps1'))) -Version 0.1.19 -DryRun
 ```
 
 ### 不执行远程脚本：官方 CLI 单行安装（固定版本）
@@ -73,7 +73,7 @@ curl -fsSL https://raw.githubusercontent.com/fredalxin/dsh-solo-thinking/main/sc
 仓库提交了预构建 `lib/`，因此也可以直接固定 GitHub tag 安装；macOS、Linux 和 Windows 通用，不执行插件构建脚本：
 
 ```bash
-dsh plugin --profile web add github:fredalxin/dsh-solo-thinking#v0.1.18
+dsh plugin --profile web add github:fredalxin/dsh-solo-thinking#v0.1.19
 ```
 
 安装完成后启动或重启 DSH，再硬刷新浏览器：
@@ -87,10 +87,10 @@ dsh --profile web
 
 ### 下载后离线安装
 
-下载 Release 中的 `dsh-plugin-solo-thinking-0.1.18.tgz` 后执行：
+下载 Release 中的 `dsh-plugin-solo-thinking-0.1.19.tgz` 后执行：
 
 ```bash
-dsh plugin --profile web add ./dsh-plugin-solo-thinking-0.1.18.tgz
+dsh plugin --profile web add ./dsh-plugin-solo-thinking-0.1.19.tgz
 dsh --profile web
 ```
 
@@ -100,7 +100,7 @@ dsh --profile web
 npm ci
 npm run verify
 npm pack
-dsh plugin --profile web add ./dsh-plugin-solo-thinking-0.1.18.tgz
+dsh plugin --profile web add ./dsh-plugin-solo-thinking-0.1.19.tgz
 ```
 
 卸载：
