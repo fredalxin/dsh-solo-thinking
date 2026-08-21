@@ -366,19 +366,6 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
         handoff,
       })
 
-      const handle = handles.get(agent.session.id)
-      if (handle) {
-        void agent.whenIdle()
-          .catch(() => undefined)
-          .then(async () => {
-            if (handles.get(agent.session.id) !== handle) return
-            handles.delete(agent.session.id)
-            await handle.dispose()
-          })
-          .catch((error) => {
-            ctx.logger.warn(`solo-thinking: failed to dispose returned branch Agent: ${renderError(error)}`)
-          })
-      }
       return success(`Returned "${located.node.title}" to its parent and sealed the branch.`, next)
     })
   }

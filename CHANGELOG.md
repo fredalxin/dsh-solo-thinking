@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+- Preserve returned branch Sessions until plugin shutdown so DSH can commit each tool result before the branch becomes read-only.
+
 ## 0.1.18 - 2026-08-15
 
 - Add one-line macOS/Linux and Windows installers backed by the latest GitHub Release tarball.
