@@ -125,6 +125,7 @@ const childFinal = spaceOf(returnedItems, childSessionId)
 if (rootFinal.revision !== 7 || childFinal.revision !== 7) {
   throw new Error('final Thinking state was not replicated to both Sessions')
 }
+await rpc('session.history', { sessionId: childSessionId, maxMessages: 100 })
 if (returnedItems.find((item) => item.sessionId === rootSessionId)?.running) {
   throw new Error('return unexpectedly woke the parent Agent')
 }
@@ -156,6 +157,7 @@ process.stdout.write(`${JSON.stringify({
   checkpointHandoff: 'agent-authored',
   childStatus: 'returned',
   parentNotice: true,
+  childSessionPreserved: true,
 })}\n`)
 
 async function prompt(sessionId, text) {

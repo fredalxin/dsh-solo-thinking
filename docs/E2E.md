@@ -31,7 +31,7 @@ dsh --profile web --patch ./scripts/e2e.patch.yml
 npm run e2e:run
 ```
 
-成功输出包含建议/根/子 Session ID、`suggestedBranches: 4`、`suggestedBranchesDormant: true`、`workspaceInherited: true`、生命周期树的 `revision: 7`、两个 `agent-authored` Handoff 标记、`childStatus: "returned"` 和 `parentNotice: true`。脚本同时断言：
+成功输出包含建议/根/子 Session ID、`suggestedBranches: 4`、`suggestedBranchesDormant: true`、`workspaceInherited: true`、生命周期树的 `revision: 7`、两个 `agent-authored` Handoff 标记、`childStatus: "returned"`、`parentNotice: true` 和 `childSessionPreserved: true`。脚本同时断言：
 
 - `thinking_start → thinking_suggest` 一次建立四个互不重名的普通子 Session，均带定向 Handoff，保持 blank 且没有 `origin: subagent`；
 - 在真实 Workspace 下启动的根 Session，其四个建议子 Session 都会持久化进入同一个 Workspace 账户，不落入“未分组”；
@@ -40,6 +40,7 @@ npm run e2e:run
 - 子 Session 可用普通 `session.prompt` 唤醒，持久化 dormancy 在 revision 3 清除；
 - `/thinking checkpoint` 先产生 revision 4 的刷新锁，再由分支 Agent 产生 revision 5 的 Current State；
 - `/thinking return` 先产生 revision 6 的 `returning` 状态，再由分支 Agent 产生 revision 7 的 returned Handoff；
+- Return 完成后子 Session 仍可读取，不会在 tool result 落盘前被销毁；
 - 根与子 Session 最终都持有 revision 7，父 Session 另有一条持久化 Handoff notice，且父 Agent 没有被自动唤醒。
 
 浏览器打开 `http://127.0.0.1:3080`。包含 `conversation.details.aux` 的 DSH 会在最终根会话右侧自动打开思考树；否则切换到「头脑风暴」。点击“技术可行性”只应选中节点，明确点击「进入分支对话」才导航；在右栏发送消息不应离开根会话。
