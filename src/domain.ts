@@ -32,6 +32,7 @@ export interface ThinkingSpace {
   version: 1
   revision: number
   rootSessionId: string
+  endedAt?: number | undefined
   nodes: ThinkingNode[]
 }
 
@@ -77,6 +78,7 @@ export const thinkingSpaceSchema: z.ZodType<ThinkingSpace> = z.object({
   version: z.literal(1),
   revision: z.number().int().nonnegative(),
   rootSessionId: z.string().min(1),
+  endedAt: z.number().int().nonnegative().optional(),
   nodes: z.array(nodeSchema).min(1),
 })
 
@@ -132,6 +134,11 @@ export function nodeById(space: ThinkingSpace, nodeId: string): ThinkingNode {
   const node = space.nodes.find((candidate) => candidate.id === nodeId)
   if (!node) throw new Error(`Thinking node "${nodeId}" does not exist`)
   return node
+}
+
+export function endSpace(space: ThinkingSpace, now: number): ThinkingSpace {
+  if (space.endedAt !== undefined) throw new Error('Thinking space has already ended')
+  return { ...space, revision: space.revision + 1, endedAt: now }
 }
 
 export function splitNode(

@@ -21,6 +21,7 @@ import {
   checkpointNode,
   completeSplitHandoff,
   createSpace,
+  endSpace,
   foldThinkingSpace,
   nodeById,
   nodeForSession,
@@ -370,12 +371,22 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     })
   }
 
+  const endThinking = async (agent: Agent): Promise<ToolResult> => {
+    const initial = requireSpace(ctx, agent)
+    return serializeWrite(writes, initial.space.rootSessionId, async () => {
+      const located = requireSpace(ctx, agent)
+      const ended = endSpace(located.space, Date.now())
+      await appendSpace(ctx, liveSessions(ctx, ended), ended)
+      return success('Thinking space ended. Start a new brainstorm in any former branch Session when ready.', ended)
+    })
+  }
+
   ctx.inject(['sessionProjections'], (projectionCtx) => projectionCtx.sessionProjections.register({
     key: THINKING_PROJECTION,
     schema: thinkingSpaceSchema.nullable(),
     init: () => null as ThinkingSpace | null,
     apply: (state, event) => event.type === THINKING_STATE_EVENT ? event.data.space : state,
-    view: (state) => state,
+    view: (state) => state?.endedAt === undefined ? state : null,
     stateVersion: 1,
   }))
 
@@ -548,6 +559,14 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
   }))
 
   ctx.tools.register(defineTool({
+    name: 'thinking_end',
+    description: 'End the entire active Solo Thinking space. Only use when the user explicitly asks to end, reset, or clear this brainstorm.',
+    parameters: {},
+    output: outputContract('End result'),
+    execute: async (_args, exec) => endThinking(requireAgent(exec)),
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'thinking_status',
     description: 'Read the current Solo Thinking tree and this Session\'s branch lifecycle.',
     parameters: {},
@@ -569,7 +588,7 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     commandCtx.commands.register({
       name: 'thinking',
       description: 'Control the current Solo Thinking tree',
-      input: { hint: 'start|split|split-retry|rename|checkpoint|return|status' },
+      input: { hint: 'start|split|split-retry|rename|checkpoint|return|end|status' },
       recordInput: false,
       handler: async ({ agent, rawInput }) => {
         try {
@@ -593,6 +612,9 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
               break
             case 'return':
               result = await requestReturnThinking(agent)
+              break
+            case 'end':
+              result = await endThinking(agent)
               break
             case 'status': {
               const located = requireSpace(ctx, agent)
@@ -622,6 +644,7 @@ type ThinkingCommand =
   | { action: 'rename'; title: string }
   | { action: 'checkpoint' }
   | { action: 'return' }
+  | { action: 'end' }
   | { action: 'status' }
 
 function parseThinkingCommand(rawInput: string): ThinkingCommand {
@@ -631,6 +654,7 @@ function parseThinkingCommand(rawInput: string): ThinkingCommand {
   const rawPayload = separator === -1 ? '' : input.slice(separator + 1).trim()
   if (action === 'status') return { action }
   if (action === 'return' && rawPayload === '') return { action }
+  if (action === 'end' && rawPayload === '') return { action }
   if (action === 'checkpoint' && rawPayload === '') return { action }
   if (action === 'start' && rawPayload === '') return { action }
 
@@ -655,7 +679,7 @@ function parseThinkingCommand(rawInput: string): ThinkingCommand {
     if (typeof record.childId !== 'string') throw new Error('Thinking split retry requires a child id')
     return { action, childId: record.childId }
   }
-  throw new Error('Use /thinking start, split, split-retry, rename, checkpoint, return, or status')
+  throw new Error('Use /thinking start, split, split-retry, rename, checkpoint, return, end, or status')
 }
 
 function renderError(error: unknown): string {
@@ -759,7 +783,7 @@ function locateSpace(ctx: Context, sessionId: SessionId) {
   let selected: { space: ThinkingSpace; node: ThinkingSpace['nodes'][number] } | undefined
   for (const session of ctx.sessions.list()) {
     const space = foldThinkingSpace(session.events)
-    if (!space) continue
+    if (!space || space.endedAt !== undefined) continue
     const node = nodeForSession(space, sessionId)
     if (!node) continue
     if (!selected || space.revision > selected.space.revision) selected = { space, node }

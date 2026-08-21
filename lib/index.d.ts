@@ -31,6 +31,7 @@ interface ThinkingSpace {
   version: 1;
   revision: number;
   rootSessionId: string;
+  endedAt?: number | undefined;
   nodes: ThinkingNode[];
 }
 interface ThinkingLimits {
@@ -58,6 +59,7 @@ declare function createSpace(rootSessionId: string, rootTitle: string, now: numb
 declare function foldThinkingSpace(events: readonly SessionEvent[]): ThinkingSpace | null;
 declare function nodeForSession(space: ThinkingSpace, sessionId: string): ThinkingNode | undefined;
 declare function nodeById(space: ThinkingSpace, nodeId: string): ThinkingNode;
+declare function endSpace(space: ThinkingSpace, now: number): ThinkingSpace;
 declare function splitNode(space: ThinkingSpace, parentId: string, child: {
   id: string;
   sessionId: string;
@@ -116,5 +118,5 @@ declare const Config: z<Schemastery.ObjectS<{
 }>>;
 declare function apply(ctx: Context, rawConfig?: Config): void;
 //#endregion
-export { Config, DEFAULT_LIMITS, DEFAULT_SUGGESTED_BRANCH_COUNT, THINKING_PROJECTION, THINKING_STATE_EVENT, ThinkingLimits, ThinkingNode, ThinkingNodeStatus, ThinkingSpace, activateNode, apply, beginCheckpointNode, beginReturnNode, cancelCheckpointNode, cancelReturnNode, checkpointNode, completeSplitHandoff, createSpace, foldThinkingSpace, inject, installRcEventCatalogEntry, name, nodeById, nodeForSession, renameNode, renderBranchContext, requestSplitNode, retrySplitHandoffNode, returnNode, splitNode, suggestNodes, thinkingSpaceSchema };
+export { Config, DEFAULT_LIMITS, DEFAULT_SUGGESTED_BRANCH_COUNT, THINKING_PROJECTION, THINKING_STATE_EVENT, ThinkingLimits, ThinkingNode, ThinkingNodeStatus, ThinkingSpace, activateNode, apply, beginCheckpointNode, beginReturnNode, cancelCheckpointNode, cancelReturnNode, checkpointNode, completeSplitHandoff, createSpace, endSpace, foldThinkingSpace, inject, installRcEventCatalogEntry, name, nodeById, nodeForSession, renameNode, renderBranchContext, requestSplitNode, retrySplitHandoffNode, returnNode, splitNode, suggestNodes, thinkingSpaceSchema };
 //# sourceMappingURL=index.d.ts.map
