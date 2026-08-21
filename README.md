@@ -140,6 +140,7 @@ Agent 会调用 `thinking_start`，随后在适合分裂时调用一次 `thinkin
 - `＋ 分裂`：只填写方向名称；父 Agent 自动为新节点准备定向 Handoff。
 - `● 进展`：让当前分支从自己的完整对话整理 Current State，供兄弟分支下一次模型轮读取。
 - `✓ 回传`：分支 Agent 撰写最终 Handoff，返回父节点并封存当前分支。
+- `■ 结束`：结束并清空当前思考空间的界面状态；历史 Session 与 Handoff 保留，随后可重新开启一棵独立的新树。
 - `进入对话`：显式导航到该 Session；单击节点本身只选择，不跳转。
 - 分支输入框：给非当前分支发消息，主会话仍停留在中间。
 
@@ -159,6 +160,7 @@ Handoff 使用简短 Markdown，覆盖目标、已确认结论、证据、风险
 | `thinking_fork_handoff` | 为人工创建的待继承节点补齐父分支 Handoff |
 | `thinking_checkpoint` | 发布本分支 Current State |
 | `thinking_return` | 向父分支提交最终 Handoff 并封存 |
+| `thinking_end` | 结束整棵树并允许原 Session 重新开始 |
 | `thinking_status` | 读取当前节点和整棵树状态 |
 
 ## 数据与安全边界

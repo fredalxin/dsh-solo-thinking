@@ -5,6 +5,7 @@ All notable changes to this project are documented here.
 ## Unreleased
 
 - Preserve returned branch Sessions until plugin shutdown so DSH can commit each tool result before the branch becomes read-only.
+- Add `thinking_end`, `/thinking end`, and UI controls to clear an active tree while preserving its historical Sessions and Handoffs.
 
 ## 0.1.18 - 2026-08-15
 

@@ -42,6 +42,8 @@ During the unpublished Agent setup window, `AgentPresets.composeFrom()` joins th
 
 The root is the caller's existing DSH Agent/Session and is not owned or disposed by the plugin. Human split creates the child first. If the parent has conversation, the child remains read-only while the parent control turn writes its targeted Handoff; an empty parent creates a ready child without manufacturing context. A failed fork remains pending and exposes Retry. `/thinking checkpoint` and `/thinking return` also accept no human Handoff. Their control commands keep the calling Agent alive through `whenIdle()`, which is required after a cold DSH resume, and verify the final Projection before reporting success. Returned child handles remain registered and read-only until plugin shutdown so DSH can commit their final tool result safely. `turn/end` recovery clears failed checkpoint/return locks; a failed checkpoint preserves its prior value, while Return restores `active`.
 
+`thinking_end` marks the whole replicated space with `endedAt`. Active lookup and the client Projection ignore ended spaces, while their Session events and Handoffs remain available as history; any former node Session can then start a fresh independent tree.
+
 Thinking mutations are exposed as model tools:
 
 - `thinking_start`: create an idempotent space in the current Session.

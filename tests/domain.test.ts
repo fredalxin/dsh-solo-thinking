@@ -9,6 +9,7 @@ import {
   checkpointNode,
   completeSplitHandoff,
   createSpace,
+  endSpace,
   nodeForSession,
   renameNode,
   renderBranchContext,
@@ -183,6 +184,17 @@ describe('Solo Thinking domain', () => {
   it('never allows the root node to return', () => {
     const space = createSpace('root', 'Root', 1)
     expect(() => returnNode(space, 'root', handoff('Done'), DEFAULT_LIMITS, 2)).toThrow('root')
+  })
+
+  it('ends a whole space without deleting its branch history', () => {
+    const space = splitNode(createSpace('root', 'Root', 1), 'root', {
+      id: 'child', sessionId: 'child-session', title: 'Child', inheritedHandoff: handoff('Child'),
+    }, DEFAULT_LIMITS, 2)
+    const ended = endSpace(space, 3)
+
+    expect(ended).toMatchObject({ revision: 2, endedAt: 3 })
+    expect(ended.nodes).toEqual(space.nodes)
+    expect(() => endSpace(ended, 4)).toThrow('already ended')
   })
 
   it('locks a branch while its Agent prepares the final Handoff and can recover', () => {

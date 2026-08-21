@@ -31,6 +31,7 @@ interface ThinkingSpace {
   version: 1;
   revision: number;
   rootSessionId: string;
+  endedAt?: number | undefined;
   nodes: ThinkingNode[];
 }
 declare module '@deepseek-ai/dsh-session/types' {

@@ -266,7 +266,7 @@ function renderThinkingTreeIcon(size: number) {
   )
 }
 
-type TreeAction = 'split' | 'rename' | 'checkpoint' | 'return'
+type TreeAction = 'split' | 'rename' | 'checkpoint' | 'return' | 'end'
 
 export function ThinkingView({
   sessionId, useProjection, useSession, useSessions, openSession, sendToBranch, runCommand,
@@ -349,7 +349,7 @@ export function ThinkingView({
     setSubmitting(true)
     setError(null)
     try {
-      const line = action === 'return' || action === 'checkpoint'
+      const line = action === 'return' || action === 'checkpoint' || action === 'end'
         ? `/thinking ${action}`
         : `/thinking ${action} ${JSON.stringify({ title })}`
       await runCommand(selected.sessionId, line)
@@ -417,6 +417,7 @@ export function ThinkingView({
             <button type="button" onClick={() => beginAction('rename')} disabled={selected.status !== 'active' || selected.forkHandoffPending || selected.checkpointRefreshingAt !== undefined}>✎ 重命名</button>
             <button type="button" onClick={() => beginAction('checkpoint')} disabled={selected.status !== 'active' || selected.forkHandoffPending || selected.checkpointRefreshingAt !== undefined || selectedRunning || selectedDormant}>● {selected.checkpointHandoff ? '刷新进展' : '生成进展'}</button>
             {selected.parentId && <button type="button" onClick={() => beginAction('return')} disabled={selected.status !== 'active' || selected.forkHandoffPending || selected.checkpointRefreshingAt !== undefined || selectedRunning || selectedDormant}>✓ 让 Agent 回传</button>}
+            {!selected.parentId && <button type="button" onClick={() => beginAction('end')} disabled={selectedRunning}>■ 结束</button>}
           </div>
           <div
             className="st-map-canvas"
@@ -507,6 +508,12 @@ export function ThinkingView({
                 <div className="st-return-explain">
                   <strong>最终 Handoff 由这个分支的 Agent 整理。</strong>
                   <span>它会回顾本分支对话，归纳结论、证据、风险和下一步，再调用 <code>thinking_return</code>。成功后分支只读；失败则恢复为可继续状态。</span>
+                </div>
+              )}
+              {action === 'end' && (
+                <div className="st-return-explain">
+                  <strong>结束后整棵树会从界面清空。</strong>
+                  <span>历史 Session 和 Handoff 仍会保留；任一原分支会话都可以重新开启一棵独立的新树。</span>
                 </div>
               )}
               {error && <p className="st-action-error" role="alert">{error}</p>}
@@ -775,6 +782,7 @@ export function ThinkingRail({
             <button type="button" disabled={controlling || selectedRunning} onClick={() => setSplitOpen(open => !open)}>＋ 分裂</button>
             <button type="button" disabled={controlling || selectedRunning || selectedDormant} onClick={() => void control('/thinking checkpoint')}>● 进展</button>
             {selected.parentId && <button type="button" disabled={controlling || selectedRunning || selectedDormant} onClick={() => void control('/thinking return')}>✓ 回传</button>}
+            {!selected.parentId && <button type="button" disabled={controlling || selectedRunning} onClick={() => globalThis.confirm('结束整棵头脑风暴？历史会话会保留。') && void control('/thinking end')}>■ 结束</button>}
           </div>
         )}
 
@@ -1027,6 +1035,7 @@ function actionTitle(action: TreeAction): string {
   if (action === 'split') return '新建子分支'
   if (action === 'rename') return '重命名当前分支'
   if (action === 'checkpoint') return '发布阶段进展'
+  if (action === 'end') return '结束整棵头脑风暴'
   return '让 Agent 整理并回传'
 }
 
@@ -1034,6 +1043,7 @@ function actionHint(action: TreeAction): string {
   if (action === 'split') return '你只命名方向；父 Agent 自动完成分支继承。'
   if (action === 'rename') return '只修改思考树里的节点名称。'
   if (action === 'checkpoint') return '兄弟分支会在下一轮自动读取，不会被唤醒。'
+  if (action === 'end') return '这只结束思考空间；历史 Session 和 Handoff 不会删除。'
   return 'Agent 成功回传后该分支只读；未成功则自动恢复，可再次尝试。'
 }
 
@@ -1041,6 +1051,7 @@ function actionSubmitLabel(action: TreeAction): string {
   if (action === 'split') return '创建分支'
   if (action === 'rename') return '保存名称'
   if (action === 'checkpoint') return '让 Agent 刷新'
+  if (action === 'end') return '确认结束'
   return '让 Agent 整理并回传'
 }
 

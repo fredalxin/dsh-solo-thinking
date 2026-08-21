@@ -143,6 +143,14 @@ if (!noticeText?.includes('Handoff returned from 技术可行性') || !noticeTex
   throw new Error('parent Session is missing the persistent returned Handoff notice')
 }
 
+const endCommand = await rpc('commands/execute', {
+  args: { agentId: rootSessionId, line: '/thinking end' },
+})
+if (endCommand?.result?.kind !== 'success') throw new Error('Thinking space could not be ended')
+await waitFor((items) => revisionOf(items, rootSessionId) === undefined)
+await prompt(rootSessionId, 'E2E：启动头脑风暴')
+await waitFor((items) => revisionOf(items, rootSessionId) === 0)
+
 process.stdout.write(`${JSON.stringify({
   ok: true,
   suggestSessionId,
@@ -158,6 +166,7 @@ process.stdout.write(`${JSON.stringify({
   childStatus: 'returned',
   parentNotice: true,
   childSessionPreserved: true,
+  restartAfterEnd: true,
 })}\n`)
 
 async function prompt(sessionId, text) {
