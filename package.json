@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-solo-thinking",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "Solo-style isolated brainstorm branches and Handoffs for DeepSeek Harness",
   "author": "fredalxin",
   "repository": {

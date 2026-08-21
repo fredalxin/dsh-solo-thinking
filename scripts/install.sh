@@ -15,7 +15,7 @@ DSH Solo Thinking installer (includes Better Sidebar)
 
 Usage: bash install.sh [version] [--profile <name>] [--dry-run]
 
-  version            GitHub Release version, for example 0.1.18 or v0.1.18.
+  version            GitHub Release version, for example 0.1.19 or v0.1.19.
                      Defaults to the latest published release.
   --profile <name>   DSH profile to install into. Defaults to web.
   --dry-run          Print the resolved command without changing the profile.
